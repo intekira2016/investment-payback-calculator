@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Инвестиции: когда вернутся мои деньги?</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#17202a;--muted:#68727e;--line:#dfe3e8;--accent:#1f7ae0;--bad:#b33a3a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:Arial,sans-serif;color:var(--text)}
+.wrap{max-width:680px;margin:auto;padding:18px 16px 28px}
+h1{font-size:24px;line-height:1.15;margin:4px 0 8px}
+.lead{color:var(--muted);font-size:14px;line-height:1.45;margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:14px}
+.field{margin-bottom:16px}
+label{display:block;font-size:14px;font-weight:700;margin-bottom:7px}
+input{width:100%;border:1px solid #cfd5dc;border-radius:10px;padding:12px;font-size:16px}
+input:focus{outline:2px solid #eaf3ff;border-color:var(--accent)}
+.hint,.note{font-size:12px;color:var(--muted);line-height:1.45;margin-top:5px}
+.btn{width:100%;border:0;border-radius:11px;padding:13px;font-size:16px;font-weight:700;background:var(--accent);color:#fff}
+.results{display:none}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.metric{border:1px solid var(--line);border-radius:12px;padding:12px}
+.metric.full{grid-column:1/-1}
+.k{font-size:12px;color:var(--muted);margin-bottom:5px}
+.v{font-size:20px;font-weight:800}
+.explain{font-size:14px;line-height:1.5}
+.error{display:none;color:var(--bad);font-size:13px;margin:8px 0}
+@media(max-width:480px){.grid{grid-template-columns:1fr}.metric.full{grid-column:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>📊 Инвестиции: когда вернутся мои деньги?</h1>
+<p class="lead">Рассчитайте простой и дисконтированный срок окупаемости проекта.</p>
+
+<form id="f">
+<div class="card">
+
+<div class="field">
+<label>💰 Первоначальные инвестиции, ₽</label>
+<input id="inv" type="text" inputmode="numeric" value="10 000 000" autocomplete="off" required>
+</div>
+
+<div class="field">
+<label>⏳ Первые поступления — через сколько месяцев?</label>
+<input id="start" type="number" min="0" max="600" step="1" value="6" required>
+<div class="hint">0 = поступления начинаются в первом месяце.</div>
+</div>
+
+<div class="field">
+<label>📈 Поступления в месяц, ₽</label>
+<input id="in" type="text" inputmode="numeric" value="2 000 000" autocomplete="off" required>
+</div>
+
+<div class="field">
+<label>💸 Расходы в месяц, ₽</label>
+<input id="out" type="text" inputmode="numeric" value="1 200 000" autocomplete="off" required>
+</div>
+
+<div class="field">
+<label>📊 Ставка дисконтирования, % годовых</label>
+<input id="rate" type="number" min="0" max="200" step="0.1" value="20" required>
+<div class="hint">Введите ставку, которую используете для оценки проекта.</div>
+</div>
+
+<div id="err" class="error"></div>
+<button class="btn" type="submit">Рассчитать окупаемость</button>
+</div>
+</form>
+
+<div id="res" class="results">
+<div class="card">
+<div class="grid">
+<div class="metric full">
+<div class="k">Расчётный денежный поток в месяц</div>
+<div class="v" id="cf">—</div>
+</div>
+<div class="metric">
+<div class="k">Простая окупаемость</div>
+<div class="v" id="sp">—</div>
+</div>
+<div class="metric">
+<div class="k">Дисконтированная окупаемость</div>
+<div class="v" id="dp">—</div>
+</div>
+<div class="metric full">
+<div class="k">NPV проекта</div>
+<div class="v" id="npv">—</div>
+</div>
+</div>
+<p class="explain" id="exp"></p>
+<p class="note">Расчётный денежный поток = поступления − расходы.<br>
+Калькулятор использует упрощённую модель: предполагается, что поступления и расходы происходят в том же месяце, в котором они указаны. Налоги, НДС, изменение оборотного капитала, остаточная стоимость и неравномерные потоки отдельно не учитываются.</p>
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+const tg=window.Telegram&&window.Telegram.WebApp;
+if(tg){tg.ready();tg.expand()}
+
+const f=document.getElementById('f');
+const res=document.getElementById('res');
+const err=document.getElementById('err');
+
+const fmt=new Intl.NumberFormat('ru-RU',{style:'currency',currency:'RUB',maximumFractionDigits:0});
+const money=x=>fmt.format(x).replace(/\u00a0/g,' ');
+const ms=x=>Number.isFinite(x)?(Math.round(x*10)/10)+' мес.':'не достигается';
+
+const moneyInputs=['inv','in','out'];
+
+function onlyDigits(value){
+  return value.replace(/[^\d]/g,'');
+}
+
+function formatThousands(value){
+  const digits=onlyDigits(value);
+  if(!digits) return '';
+  return Number(digits).toLocaleString('ru-RU').replace(/\u00a0/g,' ');
+}
+
+function numericValue(id){
+  const raw=onlyDigits(document.getElementById(id).value);
+  return raw ? Number(raw) : 0;
+}
+
+moneyInputs.forEach(id=>{
+  const el=document.getElementById(id);
+
+  el.addEventListener('focus',()=>{
+    el.value=onlyDigits(el.value);
+    el.select();
+  });
+
+  el.addEventListener('blur',()=>{
+    el.value=formatThousands(el.value);
+  });
+});
+
+function fail(s){
+  err.textContent=s;
+  err.style.display='block';
+  res.style.display='none';
+}
+
+f.addEventListener('submit',e=>{
+  e.preventDefault();
+  err.style.display='none';
+
+  moneyInputs.forEach(id=>{
+    const el=document.getElementById(id);
+    el.value=formatThousands(el.value);
+  });
+
+  const inv=numericValue('inv');
+  const start=+document.getElementById('start').value;
+  const inValue=numericValue('in');
+  const out=numericValue('out');
+  const rate=+document.getElementById('rate').value;
+
+  if(!(inv>0)) return fail('Введите сумму инвестиций больше нуля.');
+  if(start<0||start>600) return fail('Срок до первых поступлений должен быть от 0 до 600 месяцев.');
+  if(inValue<0||out<0) return fail('Поступления и расходы не могут быть отрицательными.');
+  if(!(rate>=0&&rate<=200)) return fail('Ставка дисконтирования должна быть от 0 до 200%.');
+
+  const cf=inValue-out;
+  if(cf<=0) return fail('Поступления не превышают расходы. При таких вводных проект не окупается.');
+
+  const n=1200;
+  let cum=-inv,simple=Infinity;
+
+  for(let m=1;m<=n;m++){
+    const prev=cum;
+    const flow=m<=start?0:cf;
+    cum+=flow;
+    if(simple===Infinity&&cum>=0){
+      simple=(m-1)+(flow?(0-prev)/flow:0);
+    }
+  }
+
+  const mr=Math.pow(1+rate/100,1/12)-1;
+  let dc=-inv,npv=-inv,discounted=Infinity;
+
+  for(let m=1;m<=n;m++){
+    const flow=m<=start?0:cf;
+    const pv=flow/Math.pow(1+mr,m);
+    const prev=dc;
+    dc+=pv;
+    npv+=pv;
+    if(discounted===Infinity&&dc>=0){
+      discounted=(m-1)+(pv?(0-prev)/pv:0);
+    }
+  }
+
+  document.getElementById('cf').textContent=money(cf);
+  document.getElementById('sp').textContent=ms(simple);
+  document.getElementById('dp').textContent=ms(discounted);
+  document.getElementById('npv').textContent=money(npv);
+
+  document.getElementById('exp').textContent=
+    npv>0
+      ?'При заданной ставке дисконтирования проект создаёт положительную приведённую стоимость.'
+      :npv<0
+        ?'При заданной ставке дисконтирования приведённая стоимость проекта отрицательная.'
+        :'При заданной ставке дисконтирования приведённая стоимость проекта равна нулю.';
+
+  res.style.display='block';
+  res.scrollIntoView({behavior:'smooth',block:'start'});
+});
+})();
+</script>
+</body>
+</html>
